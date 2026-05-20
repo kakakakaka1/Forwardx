@@ -15,6 +15,23 @@ require_root() {
   fi
 }
 
+confirm_yes() {
+  local prompt="$1"
+  local answer=""
+
+  if [ -r /dev/tty ] && [ -w /dev/tty ]; then
+    printf "%s" "$prompt" > /dev/tty
+    IFS= read -r answer < /dev/tty || answer=""
+  else
+    echo "[信息] 非交互环境，默认选择 N：$prompt"
+  fi
+
+  case "$answer" in
+    y|Y|yes|YES) return 0 ;;
+    *) return 1 ;;
+  esac
+}
+
 compose_cmd() {
   if docker compose version >/dev/null 2>&1; then
     docker compose "$@"
@@ -133,16 +150,16 @@ uninstall_panel() {
   fi
   docker rm -f "$CONTAINER_NAME" 2>/dev/null || true
 
-  read -r -p "是否删除部署目录 $APP_DIR ? [y/N] " confirm_dir
-  case "$confirm_dir" in
-    y|Y|yes|YES) rm -rf "$APP_DIR"; echo "[完成] 已删除 $APP_DIR" ;;
-    *) echo "[信息] 已保留 $APP_DIR" ;;
-  esac
+  if confirm_yes "是否删除部署目录 $APP_DIR ? [y/N] "; then
+    rm -rf "$APP_DIR"
+    echo "[完成] 已删除 $APP_DIR"
+  else
+    echo "[信息] 已保留 $APP_DIR"
+  fi
 
-  read -r -p "是否删除 Docker 数据卷 ${PROJECT_NAME}_forwardx-data ? [y/N] " confirm_volume
-  case "$confirm_volume" in
-    y|Y|yes|YES) docker volume rm "${PROJECT_NAME}_forwardx-data" 2>/dev/null || true ;;
-  esac
+  if confirm_yes "是否删除 Docker 数据卷 ${PROJECT_NAME}_forwardx-data ? [y/N] "; then
+    docker volume rm "${PROJECT_NAME}_forwardx-data" 2>/dev/null || true
+  fi
 }
 
 case "$ACTION" in

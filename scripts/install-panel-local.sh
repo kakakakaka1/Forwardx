@@ -14,6 +14,23 @@ require_root() {
   fi
 }
 
+confirm_yes() {
+  local prompt="$1"
+  local answer=""
+
+  if [ -r /dev/tty ] && [ -w /dev/tty ]; then
+    printf "%s" "$prompt" > /dev/tty
+    IFS= read -r answer < /dev/tty || answer=""
+  else
+    echo "[信息] 非交互环境，默认选择 N：$prompt"
+  fi
+
+  case "$answer" in
+    y|Y|yes|YES) return 0 ;;
+    *) return 1 ;;
+  esac
+}
+
 latest_tag() {
   git -C "$APP_DIR" tag --sort=-v:refname | head -1 || true
 }
@@ -135,16 +152,12 @@ uninstall_panel() {
   rm -f "/etc/systemd/system/$SERVICE_NAME.service"
   systemctl daemon-reload
 
-  read -r -p "是否删除面板程序目录 $APP_DIR ? [y/N] " confirm
-  case "$confirm" in
-    y|Y|yes|YES)
-      rm -rf "$APP_DIR"
-      echo "[完成] 已删除 $APP_DIR"
-      ;;
-    *)
-      echo "[完成] 已卸载服务，保留 $APP_DIR"
-      ;;
-  esac
+  if confirm_yes "是否删除面板程序目录 $APP_DIR ? [y/N] "; then
+    rm -rf "$APP_DIR"
+    echo "[完成] 已删除 $APP_DIR"
+  else
+    echo "[完成] 已卸载服务，保留 $APP_DIR"
+  fi
 }
 
 case "$ACTION" in
