@@ -46,7 +46,7 @@ type UpdateInfo = {
   latestVersion: string | null;
   hasUpdate: boolean;
   releaseUrl: string | null;
-  source: "release" | "tag" | null;
+  source: "release" | "tag" | "main" | null;
   publishedAt: string | null;
   checkedAt: string;
   error?: string;
@@ -87,16 +87,34 @@ function compareVersions(a: string, b: string) {
   return 0;
 }
 
-function githubApiBase(repoUrl: string) {
+function githubRepoParts(repoUrl: string) {
   const match = repoUrl.match(/github\.com\/([^/]+)\/([^/#?]+)/i);
   if (!match) throw new Error("GitHub 仓库地址格式不正确");
-  return `https://api.github.com/repos/${match[1]}/${match[2].replace(/\.git$/i, "")}`;
+  return { owner: match[1], repo: match[2].replace(/\.git$/i, "") };
+}
+
+function githubApiBase(repoUrl: string) {
+  const { owner, repo } = githubRepoParts(repoUrl);
+  return `https://api.github.com/repos/${owner}/${repo}`;
+}
+
+function githubRawMainUrl(repoUrl: string, path: string) {
+  const { owner, repo } = githubRepoParts(repoUrl);
+  return `https://raw.githubusercontent.com/${owner}/${repo}/main/${path.replace(/^\/+/, "")}`;
+}
+
+function noCacheUrl(url: string) {
+  const sep = url.includes("?") ? "&" : "?";
+  return `${url}${sep}_=${Date.now()}`;
 }
 
 async function fetchGithubJson<T>(url: string): Promise<T> {
-  const res = await fetch(url, {
+  const res = await fetch(noCacheUrl(url), {
+    cache: "no-store",
     headers: {
       "Accept": "application/vnd.github+json",
+      "Cache-Control": "no-cache",
+      "Pragma": "no-cache",
       "User-Agent": `ForwardX/${APP_VERSION}`,
     },
   });
@@ -104,11 +122,42 @@ async function fetchGithubJson<T>(url: string): Promise<T> {
   return res.json() as Promise<T>;
 }
 
+async function fetchTextNoCache(url: string): Promise<string> {
+  const res = await fetch(noCacheUrl(url), {
+    cache: "no-store",
+    headers: {
+      "Cache-Control": "no-cache",
+      "Pragma": "no-cache",
+      "User-Agent": `ForwardX/${APP_VERSION}`,
+    },
+  });
+  if (!res.ok) throw new Error(`HTTP 请求失败：${res.status} ${res.statusText}`);
+  return res.text();
+}
+
+function makeUpdateInfo(
+  latestVersion: string | null | undefined,
+  source: UpdateInfo["source"],
+  checkedAt: string,
+  releaseUrl?: string | null,
+  publishedAt?: string | null,
+): UpdateInfo {
+  return {
+    currentVersion: APP_VERSION,
+    latestVersion: latestVersion || null,
+    hasUpdate: !!latestVersion && compareVersions(latestVersion, APP_VERSION) > 0,
+    releaseUrl: releaseUrl || (latestVersion ? `${REPO_URL}/releases/tag/${latestVersion}` : null),
+    source,
+    publishedAt: publishedAt || null,
+    checkedAt,
+  };
+}
+
 async function fetchLatestUpdateInfo(): Promise<UpdateInfo> {
   const checkedAt = new Date().toISOString();
   const api = githubApiBase(REPO_URL);
-  let releaseInfo: UpdateInfo | null = null;
-  let releaseErrorMessage: string | null = null;
+  const candidates: UpdateInfo[] = [];
+  const errors: string[] = [];
 
   try {
     const latest = await fetchGithubJson<{
@@ -118,18 +167,9 @@ async function fetchLatestUpdateInfo(): Promise<UpdateInfo> {
       prerelease?: boolean;
       draft?: boolean;
     }>(`${api}/releases/latest`);
-    const latestVersion = latest.tag_name || null;
-    releaseInfo = {
-      currentVersion: APP_VERSION,
-      latestVersion,
-      hasUpdate: !!latestVersion && compareVersions(latestVersion, APP_VERSION) > 0,
-      releaseUrl: latest.html_url || `${REPO_URL}/releases/tag/${latestVersion}`,
-      source: "release",
-      publishedAt: latest.published_at || null,
-      checkedAt,
-    };
+    candidates.push(makeUpdateInfo(latest.tag_name || null, "release", checkedAt, latest.html_url || null, latest.published_at || null));
   } catch (releaseError: any) {
-    releaseErrorMessage = releaseError?.message || null;
+    errors.push(releaseError?.message || "GitHub Release 检查失败");
   }
 
   try {
@@ -139,33 +179,26 @@ async function fetchLatestUpdateInfo(): Promise<UpdateInfo> {
       .filter((name): name is string => !!name && /^v?\d+\.\d+\.\d+/.test(name))
       .sort((a, b) => compareVersions(b, a));
     const tagVersion = versionTags[0] || null;
-    if (tagVersion && (!releaseInfo?.latestVersion || compareVersions(tagVersion, releaseInfo.latestVersion) > 0)) {
-      return {
-        currentVersion: APP_VERSION,
-        latestVersion: tagVersion,
-        hasUpdate: compareVersions(tagVersion, APP_VERSION) > 0,
-        releaseUrl: `${REPO_URL}/releases/tag/${tagVersion}`,
-        source: "tag",
-        publishedAt: null,
-        checkedAt,
-      };
-    }
-    if (releaseInfo) return releaseInfo;
+    if (tagVersion) candidates.push(makeUpdateInfo(tagVersion, "tag", checkedAt));
   } catch (tagError: any) {
-    if (releaseInfo) return releaseInfo;
-    return {
-      currentVersion: APP_VERSION,
-      latestVersion: null,
-      hasUpdate: false,
-      releaseUrl: null,
-      source: null,
-      publishedAt: null,
-      checkedAt,
-      error: tagError?.message || releaseErrorMessage || "检查更新失败",
-    };
+    errors.push(tagError?.message || "GitHub Tag 检查失败");
   }
 
-  return releaseInfo || {
+  try {
+    const text = await fetchTextNoCache(githubRawMainUrl(REPO_URL, "shared/versions.ts"));
+    const match = text.match(/APP_VERSION\s*=\s*["']v?([^"']+)["']/);
+    const mainVersion = match?.[1] ? `v${normalizeVersion(match[1])}` : null;
+    if (mainVersion) candidates.push(makeUpdateInfo(mainVersion, "main", checkedAt));
+  } catch (mainError: any) {
+    errors.push(mainError?.message || "main 分支版本检查失败");
+  }
+
+  const latest = candidates
+    .filter((item) => !!item.latestVersion)
+    .sort((a, b) => compareVersions(b.latestVersion || "0", a.latestVersion || "0"))[0];
+  if (latest) return latest;
+
+  return {
     currentVersion: APP_VERSION,
     latestVersion: null,
     hasUpdate: false,
@@ -173,25 +206,27 @@ async function fetchLatestUpdateInfo(): Promise<UpdateInfo> {
     source: null,
     publishedAt: null,
     checkedAt,
-    error: releaseErrorMessage || "检查更新失败",
+    error: errors[0] || "检查更新失败",
   };
 }
 
-async function getLatestUpdateInfoCached(): Promise<UpdateInfo> {
-  if (lastUpdateInfo) {
+async function getLatestUpdateInfoCached(force = false): Promise<UpdateInfo> {
+  if (!force && lastUpdateInfo) {
     const checkedAt = new Date(lastUpdateInfo.checkedAt).getTime();
     if (Number.isFinite(checkedAt) && Date.now() - checkedAt < UPDATE_CHECK_COOLDOWN_MS) {
       return lastUpdateInfo;
     }
   }
-  if (updateCheckInFlight) {
+  if (!force && updateCheckInFlight) {
     return updateCheckInFlight;
   }
-  updateCheckInFlight = fetchLatestUpdateInfo()
+  const request = fetchLatestUpdateInfo()
     .then((info) => {
       lastUpdateInfo = info;
       return info;
-    })
+    });
+  if (force) return request;
+  updateCheckInFlight = request
     .finally(() => {
       updateCheckInFlight = null;
     });
@@ -508,13 +543,16 @@ export const systemRouter = router({
     }),
 
   /** 检查 GitHub 是否有新版本 */
-  checkUpdate: adminProcedure.query(async () => {
-    console.info("[Update] Checking latest version");
-    const info = await getLatestUpdateInfoCached();
+  checkUpdate: adminProcedure
+    .input(z.object({ force: z.boolean().optional() }).optional())
+    .query(async ({ input }) => {
+    const force = !!input?.force;
+    console.info(`[Update] Checking latest version${force ? " (force)" : ""}`);
+    const info = await getLatestUpdateInfoCached(force);
     if (info.error) {
       console.warn(`[Update] Check failed: ${info.error}`);
     } else {
-      console.info(`[Update] Current v${APP_VERSION}, latest ${info.latestVersion || "unknown"}`);
+      console.info(`[Update] Current v${APP_VERSION}, latest ${info.latestVersion || "unknown"}${info.source ? ` source=${info.source}` : ""}`);
     }
     return info;
   }),

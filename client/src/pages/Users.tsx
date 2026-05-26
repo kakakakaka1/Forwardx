@@ -88,6 +88,10 @@ function userLabel(user: any) {
   return user?.username || user?.name || `#${user?.id}`;
 }
 
+function formatCurrencyCny(cents: number | string | null | undefined): string {
+  return new Intl.NumberFormat("zh-CN", { style: "currency", currency: "CNY" }).format((Number(cents) || 0) / 100);
+}
+
 function UsersContent() {
   const { user: currentUser } = useAuth();
   const [, setLocation] = useLocation();
@@ -501,30 +505,216 @@ function UsersContent() {
 
   return (
     <div className="space-y-6">
-      <div className="flex items-center justify-between">
-        <div>
+      <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+        <div className="min-w-0">
           <h1 className="text-xl sm:text-2xl font-bold tracking-tight">用户管理</h1>
           <p className="text-muted-foreground mt-1 text-sm">
             管理系统用户、权限和流量配额
           </p>
         </div>
-        <div className="flex items-center gap-3">
-          <Badge variant="outline" className="gap-1.5 px-3 py-1.5 text-xs">
+        <div className="grid w-full grid-cols-2 gap-2 sm:flex sm:w-auto sm:items-center sm:gap-3">
+          <Badge variant="outline" className="justify-center gap-1.5 px-3 py-1.5 text-xs">
             <ShieldCheck className="h-3 w-3 text-amber-400" />
             {adminCount} 管理员
           </Badge>
-          <Badge variant="outline" className="gap-1.5 px-3 py-1.5 text-xs">
+          <Badge variant="outline" className="justify-center gap-1.5 px-3 py-1.5 text-xs">
             <UsersIcon className="h-3 w-3 text-primary" />
             {users?.length ?? 0} 用户
           </Badge>
-          <Button size="sm" onClick={() => setShowCreateUser(true)}>
+          <Button size="sm" className="col-span-2 sm:col-span-1" onClick={() => setShowCreateUser(true)}>
             <Plus className="h-4 w-4 mr-1" />
             添加用户
           </Button>
         </div>
       </div>
 
-      <Card className="glass-panel overflow-hidden">
+      {isLoading && (
+        <div className="space-y-3 sm:hidden">
+          {[1, 2, 3].map((i) => (
+            <Skeleton key={i} className="h-48 w-full rounded-lg" />
+          ))}
+        </div>
+      )}
+
+      {!isLoading && users && users.length > 0 && (
+        <div className="space-y-3 sm:hidden">
+          {users.map((u: any) => {
+            const limit = Number(u.trafficLimit) || 0;
+            const used = Number(u.trafficUsed) || 0;
+            const pct = limit > 0 ? Math.min(100, Math.round((used / limit) * 100)) : 0;
+            const isExpired = u.expiresAt && new Date(u.expiresAt) <= new Date();
+            const isOverLimit = limit > 0 && used >= limit;
+            const speedLimit = Math.max(Number(u.gostRateLimitIn) || 0, Number(u.gostRateLimitOut) || 0);
+
+            return (
+              <div key={u.id} className="rounded-lg border border-border/50 bg-card/70 p-3 shadow-sm">
+                <div className="flex items-start gap-3">
+                  <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-full bg-muted/50">
+                    {u.role === "admin" ? (
+                      <Shield className="h-4 w-4 text-amber-400" />
+                    ) : (
+                      <User className="h-4 w-4 text-muted-foreground" />
+                    )}
+                  </div>
+                  <div className="min-w-0 flex-1">
+                    <div className="flex flex-wrap items-center gap-1.5">
+                      <p className="min-w-0 max-w-full truncate text-sm font-semibold">{u.username || "未命名"}</p>
+                      <Badge variant={u.role === "admin" ? "default" : "outline"} className="h-5 px-1.5 text-[10px]">
+                        {u.role === "admin" ? "管理员" : "用户"}
+                      </Badge>
+                      {u.id === currentUser?.id && (
+                        <Badge variant="outline" className="h-5 px-1.5 text-[10px] text-primary">当前</Badge>
+                      )}
+                    </div>
+                    <p className="mt-1 truncate text-xs text-muted-foreground">
+                      #{u.id}{u.displayRemark ? ` · ${u.displayRemark}` : ""}
+                    </p>
+                  </div>
+                </div>
+
+                <div className="mt-3 grid gap-2">
+                  <div className="rounded-md bg-muted/25 p-2">
+                    <div className="flex items-center justify-between gap-2 text-xs">
+                      <span className="text-muted-foreground">流量</span>
+                      <span className="min-w-0 truncate text-right tabular-nums">
+                        {formatBytes(used)} / {limit > 0 ? formatBytes(limit) : "不限"}
+                      </span>
+                    </div>
+                    {limit > 0 && (
+                      <Progress value={pct} className={`mt-2 h-1.5 ${isOverLimit ? "[&>div]:bg-destructive" : ""}`} />
+                    )}
+                    <div className="mt-2 flex flex-wrap gap-1.5">
+                      {isOverLimit && <Badge variant="destructive" className="h-5 px-1.5 text-[10px]">超额</Badge>}
+                      {isExpired && <Badge variant="destructive" className="h-5 px-1.5 text-[10px]">已到期</Badge>}
+                      {u.trafficAutoReset && (
+                        <Badge variant="outline" className="h-5 px-1.5 text-[10px]">每月{u.trafficResetDay || 1}日重置</Badge>
+                      )}
+                    </div>
+                  </div>
+
+                  <div className="grid grid-cols-2 gap-2 text-xs">
+                    <div className="min-w-0 rounded-md bg-muted/25 p-2">
+                      <p className="text-muted-foreground">余额</p>
+                      <p className="mt-1 truncate font-medium">{formatCurrencyCny(u.balanceCents)}</p>
+                    </div>
+                    <div className="min-w-0 rounded-md bg-muted/25 p-2">
+                      <p className="text-muted-foreground">到期</p>
+                      <p className={`mt-1 truncate font-medium ${isExpired ? "text-destructive" : ""}`}>
+                        {u.expiresAt ? new Date(u.expiresAt).toLocaleDateString() : "不限"}
+                      </p>
+                    </div>
+                    <div className="min-w-0 rounded-md bg-muted/25 p-2">
+                      <p className="text-muted-foreground">Telegram</p>
+                      <p className="mt-1 truncate font-medium">
+                        {u.telegramId ? (u.telegramUsername ? `@${u.telegramUsername}` : u.telegramFirstName || u.telegramId) : "未绑定"}
+                      </p>
+                    </div>
+                    <div className="min-w-0 rounded-md bg-muted/25 p-2">
+                      <p className="text-muted-foreground">邮箱</p>
+                      <p className="mt-1 truncate font-medium">{u.emailVerified ? "已验证" : u.email ? "未验证" : "未填写"}</p>
+                    </div>
+                  </div>
+
+                  <div className="grid grid-cols-2 gap-2 text-xs">
+                    <span>规则: {u.maxRules ? `${u.maxRules} 条` : "不限"}</span>
+                    <span>端口: {u.maxPorts ? `${u.maxPorts} 个` : "不限"}</span>
+                    <span>连接: {u.maxConnections ? `${u.maxConnections}` : "不限"}</span>
+                    <span>单 IP: {u.maxIPs ? `${u.maxIPs}` : "不限"}</span>
+                    {speedLimit > 0 && <span className="col-span-2">限速: {formatSpeed(speedLimit)}</span>}
+                  </div>
+
+                  <div className="grid grid-cols-2 gap-2">
+                    <Select
+                      value={u.role}
+                      onValueChange={(v: "user" | "admin") => {
+                        if (u.id === currentUser?.id) {
+                          toast.error("不能修改自己的角色");
+                          return;
+                        }
+                        updateRoleMutation.mutate({ userId: u.id, role: v });
+                      }}
+                      disabled={u.id === currentUser?.id}
+                    >
+                      <SelectTrigger className="h-9 text-xs">
+                        <SelectValue />
+                      </SelectTrigger>
+                      <SelectContent>
+                        <SelectItem value="admin">管理员</SelectItem>
+                        <SelectItem value="user">普通用户</SelectItem>
+                      </SelectContent>
+                    </Select>
+                    <div className="flex h-9 items-center justify-between rounded-md border border-border/50 px-2">
+                      <span className="text-xs text-muted-foreground">转发</span>
+                      <Switch
+                        checked={u.role === "admin" || !!u.canAddRules}
+                        disabled={u.role === "admin" || updateForwardAccessMutation.isPending}
+                        onCheckedChange={(checked) => updateForwardAccessMutation.mutate({ userId: u.id, enabled: checked })}
+                      />
+                    </div>
+                  </div>
+
+                  <div className="grid grid-cols-3 gap-2 pt-1">
+                    <Button variant="outline" size="sm" className="h-9 px-2 text-xs" onClick={() => {
+                      setRechargeUserId(u.id);
+                      setRechargeUserName(userLabel(u));
+                      setRechargeAmount("");
+                      setShowRecharge(true);
+                    }}>
+                      <WalletCards className="mr-1 h-3.5 w-3.5" />
+                      充值
+                    </Button>
+                    <Button variant="outline" size="sm" className="h-9 px-2 text-xs" onClick={() => openTrafficSettings(u)}>
+                      <Settings className="mr-1 h-3.5 w-3.5" />
+                      权限
+                    </Button>
+                    <Button variant="outline" size="sm" className="h-9 px-2 text-xs" disabled={!u.emailVerified || !u.email} onClick={() => openSendEmail(u)}>
+                      <Mail className="mr-1 h-3.5 w-3.5" />
+                      邮件
+                    </Button>
+                    <Button variant="outline" size="sm" className="h-9 px-2 text-xs" onClick={() => {
+                      setResetTrafficUserId(u.id);
+                      setResetTrafficUserName(userLabel(u));
+                      setShowResetTraffic(true);
+                    }}>
+                      <RotateCcw className="mr-1 h-3.5 w-3.5" />
+                      重置
+                    </Button>
+                    <Button variant="outline" size="sm" className="h-9 px-2 text-xs" onClick={() => {
+                      setResetUserId(u.id);
+                      setResetUserName(userLabel(u));
+                      setResetUsernameInput(u.username || "");
+                      setResetNewPassword("");
+                      setShowResetPassword(true);
+                    }}>
+                      <KeyRound className="mr-1 h-3.5 w-3.5" />
+                      账户
+                    </Button>
+                    <Button variant="outline" size="sm" className="h-9 px-2 text-xs text-destructive hover:text-destructive" disabled={u.id === currentUser?.id} onClick={() => {
+                      if (u.id === currentUser?.id) return;
+                      if (confirm(`确定要删除用户 "${userLabel(u)}" 吗？`)) deleteMutation.mutate({ userId: u.id });
+                    }}>
+                      <Trash2 className="mr-1 h-3.5 w-3.5" />
+                      删除
+                    </Button>
+                  </div>
+                </div>
+              </div>
+            );
+          })}
+        </div>
+      )}
+
+      {!isLoading && (!users || users.length === 0) && (
+        <div className="flex flex-col items-center justify-center rounded-lg border border-border/50 bg-card/60 py-16 text-muted-foreground sm:hidden">
+          <div className="h-14 w-14 rounded-2xl bg-muted/30 flex items-center justify-center mb-4">
+            <UsersIcon className="h-7 w-7 opacity-40" />
+          </div>
+          <p className="text-base font-medium">暂无其他用户</p>
+          <p className="mt-1 text-sm text-muted-foreground/60">点击添加用户创建账号</p>
+        </div>
+      )}
+
+      <Card className="glass-panel hidden overflow-hidden sm:block">
         <CardContent className="p-0">
           {isLoading ? (
             <div className="p-6 space-y-3">
@@ -663,7 +853,7 @@ function UsersContent() {
                         </TableCell>
                         <TableCell className="hidden md:table-cell">
                           <span className="text-sm font-medium">
-                            {new Intl.NumberFormat("zh-CN", { style: "currency", currency: "CNY" }).format((Number(u.balanceCents) || 0) / 100)}
+                            {formatCurrencyCny(u.balanceCents)}
                           </span>
                         </TableCell>
                         <TableCell className="hidden md:table-cell">

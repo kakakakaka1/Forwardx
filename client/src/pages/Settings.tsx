@@ -1552,7 +1552,7 @@ function SystemInfoSection() {
     try {
       setCheckingUpdate(true);
       lastPanelUpdateCheck.current = now;
-      await utils.system.checkUpdate.fetch();
+      await utils.system.checkUpdate.fetch({ force: true });
       await refetchUpgradeStatus();
       toast.success("版本检查完成");
     } catch (err: any) {
@@ -2035,7 +2035,7 @@ function SystemInfoSection() {
                   <div>
                     <p className="text-sm font-semibold text-primary">发现新版本 {updateInfo.latestVersion}</p>
                     <p className="mt-1 text-xs text-muted-foreground">
-                      来源：{updateInfo.source === "release" ? "GitHub Release" : "GitHub Tag"}
+                      来源：{updateInfo.source === "release" ? "GitHub Release" : updateInfo.source === "tag" ? "GitHub Tag" : updateInfo.source === "main" ? "main 分支" : "GitHub"}
                       {updateInfo.publishedAt ? `，发布时间：${new Date(updateInfo.publishedAt).toLocaleString()}` : ""}
                     </p>
                   </div>

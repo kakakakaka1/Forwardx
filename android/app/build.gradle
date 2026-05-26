@@ -7,6 +7,11 @@ def appVersionCode = {
     while (parts.size() < 3) parts.add(0)
     return parts[0] * 10000 + parts[1] * 100 + parts[2]
 }()
+def releaseKeystoreFile = System.getenv("ANDROID_KEYSTORE_FILE")
+def releaseKeystorePassword = System.getenv("ANDROID_KEYSTORE_PASSWORD")
+def releaseKeyAlias = System.getenv("ANDROID_KEY_ALIAS")
+def releaseKeyPassword = System.getenv("ANDROID_KEY_PASSWORD")
+def hasReleaseSigning = releaseKeystoreFile && releaseKeystorePassword && releaseKeyAlias && releaseKeyPassword
 
 android {
     namespace = "com.forwardx.app"
@@ -24,9 +29,22 @@ android {
             ignoreAssetsPattern = '!.svn:!.git:!.ds_store:!*.scc:.*:!CVS:!thumbs.db:!picasa.ini:!*~'
         }
     }
+    signingConfigs {
+        if (hasReleaseSigning) {
+            release {
+                storeFile file(releaseKeystoreFile)
+                storePassword releaseKeystorePassword
+                keyAlias releaseKeyAlias
+                keyPassword releaseKeyPassword
+            }
+        }
+    }
     buildTypes {
         release {
             minifyEnabled false
+            if (hasReleaseSigning) {
+                signingConfig signingConfigs.release
+            }
             proguardFiles getDefaultProguardFile('proguard-android.txt'), 'proguard-rules.pro'
         }
     }

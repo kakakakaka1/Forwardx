@@ -48,16 +48,60 @@ jobs:
       - name: Prepare Gradle wrapper
         run: chmod +x android/gradlew
 
+      - name: Prepare release signing
+        id: signing
+        shell: bash
+        env:
+          ANDROID_KEYSTORE_BASE64: ${{ secrets.ANDROID_KEYSTORE_BASE64 }}
+          ANDROID_KEYSTORE_PASSWORD: ${{ secrets.ANDROID_KEYSTORE_PASSWORD }}
+          ANDROID_KEY_ALIAS: ${{ secrets.ANDROID_KEY_ALIAS }}
+          ANDROID_KEY_PASSWORD: ${{ secrets.ANDROID_KEY_PASSWORD }}
+        run: |
+          if [[ -n "$ANDROID_KEYSTORE_BASE64" && -n "$ANDROID_KEYSTORE_PASSWORD" && -n "$ANDROID_KEY_ALIAS" && -n "$ANDROID_KEY_PASSWORD" ]]; then
+            mkdir -p android/app/keystore
+            echo "$ANDROID_KEYSTORE_BASE64" | base64 -d > android/app/keystore/release.jks
+            echo "signed=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "signed=false" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Build release APK
+        if: steps.signing.outputs.signed == 'true'
+        working-directory: android
+        env:
+          ANDROID_KEYSTORE_FILE: keystore/release.jks
+          ANDROID_KEYSTORE_PASSWORD: ${{ secrets.ANDROID_KEYSTORE_PASSWORD }}
+          ANDROID_KEY_ALIAS: ${{ secrets.ANDROID_KEY_ALIAS }}
+          ANDROID_KEY_PASSWORD: ${{ secrets.ANDROID_KEY_PASSWORD }}
+        run: ./gradlew assembleRelease
+
       - name: Build debug APK
+        if: steps.signing.outputs.signed != 'true' && !startsWith(github.ref, 'refs/tags/')
         working-directory: android
         run: ./gradlew assembleDebug
+
+      - name: Require release signing for tag builds
+        if: steps.signing.outputs.signed != 'true' && startsWith(github.ref, 'refs/tags/')
+        run: |
+          echo "Release APK signing secrets are not configured."
+          echo "Add ANDROID_KEYSTORE_BASE64, ANDROID_KEYSTORE_PASSWORD, ANDROID_KEY_ALIAS, ANDROID_KEY_PASSWORD."
+          exit 1
 
       - name: Rename APK
         shell: bash
         run: |
           VERSION="${GITHUB_REF_NAME:-manual}"
           mkdir -p dist/android
-          cp android/app/build/outputs/apk/debug/app-debug.apk "dist/android/forwardx-android-${VERSION}.apk"
+          if [[ -f android/app/build/outputs/apk/release/app-release.apk ]]; then
+            cp android/app/build/outputs/apk/release/app-release.apk "dist/android/forwardx-android-${VERSION}.apk"
+          else
+            cp android/app/build/outputs/apk/debug/app-debug.apk "dist/android/forwardx-android-${VERSION}-debug.apk"
+            cat > dist/android/README-APK-SIGNING.txt <<'EOF'
+          This APK is debug-signed because release signing secrets are not configured.
+          To support in-place upgrades, add these repository secrets:
+          ANDROID_KEYSTORE_BASE64, ANDROID_KEYSTORE_PASSWORD, ANDROID_KEY_ALIAS, ANDROID_KEY_PASSWORD.
+          EOF
+          fi
 
       - name: Upload APK artifact
         uses: actions/upload-artifact@v4

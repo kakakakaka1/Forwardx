@@ -525,27 +525,6 @@ function DashboardLayoutContent({
             </SidebarGroup>
           )}
 
-          {mobileAuth.isNative && (
-            <SidebarGroup>
-              <SidebarGroupLabel className="text-xs text-muted-foreground/60 uppercase tracking-wider">
-                APP
-              </SidebarGroupLabel>
-              <SidebarMenu className="px-2 py-1">
-                <SidebarMenuItem>
-                  <SidebarMenuButton
-                    onClick={handleMobileUpdateCheck}
-                    tooltip="检查更新"
-                    className="h-10 transition-all font-normal"
-                    disabled={checkingMobileUpdate}
-                  >
-                    {checkingMobileUpdate ? <Loader2 className="h-4 w-4 animate-spin" /> : <Download className="h-4 w-4" />}
-                    <span>检查更新</span>
-                  </SidebarMenuButton>
-                </SidebarMenuItem>
-              </SidebarMenu>
-            </SidebarGroup>
-          )}
-
           {/* Theme toggle for collapsed sidebar */}
           {isCollapsed && (
             <SidebarGroup>
@@ -667,6 +646,20 @@ function DashboardLayoutContent({
                 <Send className="mr-2 h-4 w-4" />
                 <span>{telegramStatus?.bound ? "Telegram 已绑定" : "绑定 Telegram"}</span>
               </DropdownMenuItem>
+              {mobileAuth.isNative && (
+                <DropdownMenuItem
+                  onClick={handleMobileUpdateCheck}
+                  disabled={checkingMobileUpdate}
+                  className="cursor-pointer"
+                >
+                  {checkingMobileUpdate ? (
+                    <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+                  ) : (
+                    <Download className="mr-2 h-4 w-4" />
+                  )}
+                  <span>APP 更新</span>
+                </DropdownMenuItem>
+              )}
               <DropdownMenuSeparator />
               <DropdownMenuItem
                 onClick={logout}
